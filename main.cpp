@@ -6,9 +6,13 @@
 #include <arpa/inet.h>  //inet_pton
 #include <errno.h>
 #include <stdio.h>
+#include <cstdlib>
 
 #include <sstream>
 
+#include <sys/time.h> // timeval
+
+#include <unistd.h> //read,write
 struct IP
 {
     std::string proxyIp;
@@ -37,6 +41,7 @@ void parseParameter(IP& ip, int argc, char* argv[])
     else
     {
         std::cout << "Parameter missing! :(\n";
+        exit(1);
     }
 }
 
@@ -86,9 +91,8 @@ std::string createConnectionString(std::string destIp, int destPort)
 
 bool remoteConnect(int socket, std::string connString)
 {
-    bool result = true;
-
-    if (connString.size() != send(socket,connString.c_str(),connString.size(),0))
+    int len = send(socket, connString.c_str(), connString.size(), 0);
+    if (static_cast<int>(connString.size()) != len)
     {
         perror("TODO: do the send() in the correct way :)");
     }
@@ -104,12 +108,46 @@ bool remoteConnect(int socket, std::string connString)
         return false;
     }
 
-    return result;
+   return true;
 }
 
 
-void doProxy()
+void doProxy(int socket)
 {
+//    std::cout << "Proxy started\n";
+    while(true)
+    {
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        timeval tv;
+        tv.tv_sec = 5;
+        tv.tv_usec = 0;
+
+        FD_SET(socket, &rfds);
+        FD_SET(0, &rfds);
+        select(socket+1, &rfds, NULL, NULL, &tv);
+
+        // there is something on stdin
+        if (FD_ISSET(0,&rfds))
+        {
+            char buf[4096];
+            int len = read(0, buf, sizeof(buf));
+            if (len <= 0) break;
+            len = send(socket, buf, len, 0);
+            if (len <= 0) break;
+        }
+
+        // something arrived on socket
+        if (FD_ISSET(socket,&rfds))
+        {
+            char buf[4096];
+            int len = recv(socket, buf, sizeof(buf),0);
+            if (len <= 0) break;
+//            len = send(1,buf,len,0);  // send can be used for socket!!!
+            len = write(1, buf, len);
+            if (len <= 0) break;
+        }
+    }
 }
 
 
@@ -122,15 +160,15 @@ int main(int argc, char* argv[])
 
 
     std::string connString = createConnectionString(ip.targetIp, ip.targetPort);
-    std::cout << connString;
 
     if (remoteConnect(socket, connString))
     {
-        doProxy();
+//        std::cout << connString << "CONNECT... OK\n";
+        doProxy(socket);
     }
     else
     {
-        std::cout << "Remote connection failure!\n";
+//        std::cout << "Remote connection failure!\n";
         return 1;
     }
 
